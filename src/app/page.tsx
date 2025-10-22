@@ -15,28 +15,71 @@ export default function Home() {
     },
   });
 
-  useEffect(() => {
-    if (error) {
-      console.error("ASR Error:", error);
-    }
-  }, [error]);
-
-  const [pageState, setPageState] = useState<"start" | "recording" | "animating" | "reversing" | "main">("start");
+  const [pageState, setPageState] = useState<"start" | "countdown" | "recording" | "animating" | "main">("start");
+  const [countdown, setCountdown] = useState(3); // 倒计时：3, 2, 1
   const [showOriginal, setShowOriginal] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
   const [shouldSubmit, setShouldSubmit] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showLowVolumeWarning, setShowLowVolumeWarning] = useState(false);
+  const [microphoneError, setMicrophoneError] = useState<string | null>(null);
+  const [isFirstRecording, setIsFirstRecording] = useState(true); // 是否第一次录音
   const touchStartRef = useRef<{ distance: number } | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const recordingStartTimeRef = useRef<number>(0);
+  const lowVolumeStartTimeRef = useRef<number | null>(null);
+
+  // 处理麦克风错误
+  useEffect(() => {
+    if (error) {
+      console.error("ASR Error:", error);
+      
+      const errorMessage = error.toString().toLowerCase();
+      
+      if (errorMessage.includes('notfound') || errorMessage.includes('device not found')) {
+        setMicrophoneError("无法使用麦克风，请检查权限设置");
+      } else if (errorMessage.includes('notallowed') || errorMessage.includes('permission')) {
+        setMicrophoneError("无法使用麦克风，请检查权限设置");
+      } else if (errorMessage.includes('notreadable') || errorMessage.includes('in use')) {
+        setMicrophoneError("麦克风遇到问题，请联系我们处理");
+      } else {
+        setMicrophoneError("麦克风遇到问题，请联系我们处理");
+      }
+    } else {
+      setMicrophoneError(null);
+    }
+  }, [error]);
+
+  // 倒计时逻辑
+  useEffect(() => {
+    if (pageState === "countdown") {
+      if (countdown > 0) {
+        const timer = setTimeout(() => {
+          setCountdown(countdown - 1);
+        }, 1000);
+        return () => clearTimeout(timer);
+      } else {
+        // 倒计时结束，开始录音
+        setPageState("recording");
+        startRecording();
+        setCountdown(3); // 重置倒计时
+      }
+    }
+  }, [pageState, countdown]);
 
   useEffect(() => {
     if (asrStatus === "recording" && pageState === "recording") {
       startAudioMonitoring();
+      recordingStartTimeRef.current = Date.now();
+      lowVolumeStartTimeRef.current = Date.now();
     } else {
       stopAudioMonitoring();
+      setShowLowVolumeWarning(false);
+      recordingStartTimeRef.current = 0;
+      lowVolumeStartTimeRef.current = null;
     }
     
     return () => stopAudioMonitoring();
@@ -44,12 +87,19 @@ export default function Home() {
 
   useEffect(() => {
     if (isLoading && pageState === "recording") {
-      setPageState("animating");
-      setTimeout(() => {
+      if (isFirstRecording) {
+        // 第一次录音：播放动画
+        setPageState("animating");
+        setTimeout(() => {
+          setPageState("main");
+          setIsFirstRecording(false);
+        }, 1000);
+      } else {
+        // 后续录音：直接跳转
         setPageState("main");
-      }, 1000);
+      }
     }
-  }, [isLoading, pageState]);
+  }, [isLoading, pageState, isFirstRecording]);
 
   useEffect(() => {
     if (shouldSubmit && asrStatus === "idle") {
@@ -62,6 +112,27 @@ export default function Home() {
       }, 100);
     }
   }, [shouldSubmit, asrStatus, transcript, textLLM, setInput]);
+
+  useEffect(() => {
+    if (pageState === "recording" && recordingStartTimeRef.current > 0) {
+      const currentTime = Date.now();
+
+      if (audioLevel > 0.15) {
+        lowVolumeStartTimeRef.current = null;
+        setShowLowVolumeWarning(false);
+      } else {
+        if (lowVolumeStartTimeRef.current === null) {
+          lowVolumeStartTimeRef.current = currentTime;
+        }
+
+        const lowVolumeDuration = currentTime - lowVolumeStartTimeRef.current;
+
+        if (lowVolumeDuration > 8000) {
+          setShowLowVolumeWarning(true);
+        }
+      }
+    }
+  }, [audioLevel, pageState]);
 
   const startAudioMonitoring = async () => {
     try {
@@ -105,17 +176,11 @@ export default function Home() {
   };
 
   const handleFirstClick = () => {
-    setPageState("recording");
-    startRecording();
+    setPageState("countdown");
   };
 
   const handleRestartRecording = () => {
-    setPageState("reversing");
-    
-    setTimeout(() => {
-      setPageState("recording");
-      startRecording();
-    }, 1000);
+    setPageState("countdown"); // 直接开始倒计时，不播放动画
   };
 
   const handleCopy = async () => {
@@ -157,6 +222,7 @@ export default function Home() {
     }
   };
 
+  // 开始页面
   if (pageState === "start") {
     return (
       <div 
@@ -182,9 +248,8 @@ export default function Home() {
     );
   }
 
-  if (pageState === "recording") {
-    const glowIntensity = 0.5 + audioLevel * 0.7;
-    
+  // 倒计时页面
+  if (pageState === "countdown") {
     return (
       <div 
         className="fixed inset-0 flex items-center justify-center overflow-hidden"
@@ -192,25 +257,57 @@ export default function Home() {
           background: 'radial-gradient(ellipse 50% 108.4% at 50% 50%, #F4F4F5 0%, #D5D5D5 100%)'
         }}
       >
-        <div 
-          className="absolute left-0 top-0 bottom-0 w-20 pointer-events-none transition-opacity duration-100"
-          style={{
-            background: `linear-gradient(to right, rgba(22, 163, 74, ${glowIntensity * 0.9}) 0%, rgba(22, 163, 74, 0) 100%)`,
-            opacity: glowIntensity
-          }}
-        />
-        
-        <div 
-          className="absolute right-0 top-0 bottom-0 w-20 pointer-events-none transition-opacity duration-100"
-          style={{
-            background: `linear-gradient(to left, rgba(22, 163, 74, ${glowIntensity * 0.9}) 0%, rgba(22, 163, 74, 0) 100%)`,
-            opacity: glowIntensity
-          }}
-        />
+        {/* ✅ 修改1：pt-72 → pt-48，text-neutral-500 → text-gray-400 */}
+        <div className="absolute top-0 left-0 right-0 flex justify-center pt-48">
+          <span className="text-gray-400 text-sm">倒计时:</span>
+        </div>
 
+        <div className="flex flex-col items-center gap-6">
+          {/* ✅ 修改2：w-36 h-36 → w-40 h-40 */}
+          <div className="w-40 h-40 rounded-full bg-[#E9BA87] border-4 border-[#EECBA5] flex items-center justify-center shadow-xl">
+            <span className="text-white text-6xl font-bold">{countdown}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-zinc-600 text-lg font-bold">写道</span>
+            <span className="text-zinc-600 text-xl font-bold">Renaissance</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 录音页面
+  if (pageState === "recording") {
+    return (
+      <div 
+        className="fixed inset-0 flex items-center justify-center overflow-hidden"
+        style={{
+          background: 'radial-gradient(ellipse 50% 108.4% at 50% 50%, #F4F4F5 0%, #D5D5D5 100%)'
+        }}
+      >
         <div className="absolute top-0 left-0 right-0 flex justify-center pt-48">
           <span className="text-gray-400 text-sm">录制中</span>
         </div>
+
+        {/* 麦克风错误弹窗 */}
+        {microphoneError && (
+          <div className="absolute top-12 left-1/2 transform -translate-x-1/2 px-4 py-3 bg-white rounded-lg shadow-lg border border-neutral-200 flex items-center gap-2 z-50 animate-fade-in max-w-sm">
+            <div className="w-5 h-5 rounded-full border-2 border-zinc-900 flex items-center justify-center flex-shrink-0">
+              <span className="text-zinc-900 text-sm font-bold">!</span>
+            </div>
+            <span className="text-zinc-900 text-sm">{microphoneError}</span>
+          </div>
+        )}
+
+        {/* 音量低警告弹窗 */}
+        {showLowVolumeWarning && !microphoneError && (
+          <div className="absolute top-12 left-1/2 transform -translate-x-1/2 px-4 py-3 bg-white rounded-lg shadow-lg border border-neutral-200 flex items-center gap-2 z-50 animate-fade-in max-w-sm">
+            <div className="w-5 h-5 rounded-full border-2 border-zinc-900 flex items-center justify-center flex-shrink-0">
+              <span className="text-zinc-900 text-sm font-bold">!</span>
+            </div>
+            <span className="text-zinc-900 text-sm">没检测到声音或声音过小，在设置调整您的麦克风？</span>
+          </div>
+        )}
 
         <div className="flex flex-col items-center gap-6">
           <form ref={formRef} onSubmit={handleSubmit} className="flex flex-col items-center gap-6">
@@ -222,7 +319,7 @@ export default function Home() {
                 stopRecording();
                 setShouldSubmit(true);
               }}
-              className="w-40 h-40 rounded-full bg-green-600 border-4 border-green-500 hover:scale-105 active:scale-95 transition-all duration-300 flex items-center justify-center shadow-xl animate-pulse-glow"
+              className="w-40 h-40 rounded-full bg-[#E9BA87] border-4 border-[#EECBA5] hover:scale-105 active:scale-95 transition-all duration-300 flex items-center justify-center shadow-xl animate-pulse-glow"
               aria-label="停止录音"
             >
               <Mic className="w-20 h-20 text-white" strokeWidth={2} />
@@ -237,17 +334,25 @@ export default function Home() {
 
         <style jsx>{`
           @keyframes pulseGlow {
-            0%, 100% { box-shadow: 0 0 20px rgba(22, 163, 74, 0.4); }
-            50% { box-shadow: 0 0 40px rgba(22, 163, 74, 0.8); }
+            0%, 100% { box-shadow: 0 0 20px rgba(233, 186, 135, 0.4); }
+            50% { box-shadow: 0 0 40px rgba(233, 186, 135, 0.8); }
           }
           .animate-pulse-glow {
             animation: pulseGlow 1.5s ease-in-out infinite;
+          }
+          @keyframes fadeIn {
+            from { opacity: 0; transform: translate(-50%, -10px); }
+            to { opacity: 1; transform: translate(-50%, 0); }
+          }
+          .animate-fade-in {
+            animation: fadeIn 0.3s ease-out;
           }
         `}</style>
       </div>
     );
   }
 
+  // 动画页面（只有第一次）
   if (pageState === "animating") {
     return (
       <div 
@@ -301,57 +406,7 @@ export default function Home() {
     );
   }
 
-  if (pageState === "reversing") {
-    return (
-      <div 
-        className="fixed inset-0 flex items-center justify-center overflow-hidden bg-white"
-      >
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="animate-shrink-circle bg-white rounded-full flex items-center justify-center border-4 border-zinc-200">
-            <Mic className="w-20 h-20 text-zinc-600 animate-fade-in" strokeWidth={2} />
-          </div>
-        </div>
-
-        <style jsx>{`
-          @keyframes shrinkCircle {
-            0% {
-              width: 300vmax;
-              height: 300vmax;
-              opacity: 0;
-              background: radial-gradient(ellipse 50% 108.4% at 50% 50%, #F4F4F5 0%, #D5D5D5 100%);
-            }
-            40% {
-              width: 300vmax;
-              height: 300vmax;
-              opacity: 0.8;
-            }
-            100% {
-              width: 10rem;
-              height: 10rem;
-              opacity: 1;
-            }
-          }
-
-          @keyframes fadeIn {
-            0% { opacity: 0; }
-            70% { opacity: 0; }
-            100% { opacity: 1; }
-          }
-
-          .animate-shrink-circle {
-            width: 10rem;
-            height: 10rem;
-            animation: shrinkCircle 1s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-          }
-
-          .animate-fade-in {
-            animation: fadeIn 0.6s ease-out forwards;
-          }
-        `}</style>
-      </div>
-    );
-  }
-
+  // 结果页面
   return (
     <div 
       className="fixed inset-0 bg-white flex flex-col overflow-hidden animate-page-fade-in"
