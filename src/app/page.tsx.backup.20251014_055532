@@ -1,0 +1,299 @@
+"use client";
+
+import { useEffect, useState, useRef } from "react";
+import { useCompletion } from "@ai-sdk/react";
+import { useASR } from "@/hooks/use-asr";
+import { Mic } from "lucide-react";
+
+export default function Home() {
+  // 动画状态管理
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [showContent, setShowContent] = useState(false);
+
+  // 原有的功能状态
+  const [textLLM, setTextLLM] = useState("");
+  const { transcript, asrStatus, startRecording, stopRecording, error: asrError } = useASR();
+  
+  const { completion, complete, error: completionError } = useCompletion({
+    api: "/api/completion",
+  });
+
+  // 触摸手势检测
+  const touchStartRef = useRef<{ distance: number; time: number } | null>(null);
+
+  useEffect(() => {
+    if (asrError) {
+      console.error("ASR Error:", asrError);
+    }
+    if (completionError) {
+      console.error("Completion Error:", completionError);
+    }
+  }, [asrError, completionError]);
+
+  // 解析 XML 标签提取纯文本
+  useEffect(() => {
+    if (completion) {
+      const extractedText = extractNewText(completion);
+      if (extractedText !== completion) {
+        setTextLLM(extractedText);
+      } else {
+        setTextLLM(completion);
+      }
+    }
+  }, [completion]);
+
+  // 处理展开动画
+  const handleExpand = () => {
+    if (!isExpanded && !isAnimating) {
+      setIsAnimating(true);
+      startRecording();
+      
+      // 动画序列
+      setTimeout(() => {
+        setShowContent(true);
+      }, 800);
+      
+      setTimeout(() => {
+        setIsExpanded(true);
+        setIsAnimating(false);
+      }, 1400);
+    }
+  };
+
+  // 双指缩放检测
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      const distance = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      touchStartRef.current = { distance, time: Date.now() };
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && touchStartRef.current) {
+      const distance = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      const diff = distance - touchStartRef.current.distance;
+      
+      // 如果是捏合手势（距离缩小）并且幅度足够大
+      if (diff < -50) {
+        handleExpand();
+        touchStartRef.current = null;
+      }
+    }
+  };
+
+  // 原有的单按钮逻辑：点击一次开始，再点击停止并发送
+  const handleMicClick = () => {
+    if (asrStatus !== "recording") {
+      startRecording();
+    } else {
+      stopRecording();
+      // 停止录音后自动发送
+      if (transcript) {
+        const userInput = generateUserInput(textLLM, transcript);
+        complete(userInput);
+      }
+    }
+  };
+
+  // 第一个界面：极简录音按钮
+  if (!isExpanded && !isAnimating) {
+    return (
+      <div 
+        className="fixed inset-0 bg-gradient-to-b from-gray-800 to-zinc-600 flex items-center justify-center overflow-hidden"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+      >
+        <div className="flex flex-col items-center gap-8 animate-fade-in">
+          <button
+            onClick={handleExpand}
+            className="w-40 h-40 rounded-full bg-slate-200/90 hover:bg-slate-200 active:scale-95 transition-all duration-300 flex items-center justify-center shadow-2xl hover:shadow-slate-400/50"
+            aria-label="Start recording"
+          >
+            <Mic className="w-20 h-20 text-gray-800" />
+          </button>
+          <p className="text-gray-300/60 text-sm">点击开始录音</p>
+        </div>
+
+        <style jsx>{`
+          @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.9); }
+            to { opacity: 1; transform: scale(1); }
+          }
+          .animate-fade-in {
+            animation: fadeIn 0.6s ease-out;
+          }
+        `}</style>
+      </div>
+    );
+  }
+
+  // 动画状态：圆形扩展
+  if (isAnimating) {
+    return (
+      <div className="fixed inset-0 bg-gradient-to-b from-gray-800 to-zinc-600 flex items-center justify-center overflow-hidden">
+        {/* 扩展的圆形 */}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="circle-expand bg-slate-200/90 rounded-full flex items-center justify-center">
+            <Mic className="w-20 h-20 text-gray-800 icon-fade" />
+          </div>
+        </div>
+
+        {/* 内容淡入 */}
+        {showContent && (
+          <div className="w-full max-w-md flex flex-col gap-6 px-6 content-fade-in relative z-10">
+            {/* Speech to Text Section */}
+            <div className="flex flex-col gap-3">
+              <h2 className="text-xl text-white font-normal">Speech to Text</h2>
+              <div className="w-full h-56 bg-white/10 border border-white/20 rounded-lg p-4 overflow-auto backdrop-blur-sm">
+                <p className="text-white/90 text-base leading-relaxed whitespace-pre-wrap">
+                  {transcript || "正在录音..."}
+                </p>
+              </div>
+            </div>
+
+            {/* Text after LLM Section */}
+            <div className="flex flex-col gap-3">
+              <h2 className="text-xl text-white font-normal">Text after LLM</h2>
+              <div className="w-full h-64 bg-white/10 border border-white/20 rounded-lg p-4 overflow-auto backdrop-blur-sm">
+                <p className="text-white/90 text-base leading-relaxed whitespace-pre-wrap">
+                  {textLLM || "等待处理..."}
+                </p>
+              </div>
+            </div>
+
+            {/* Bottom Controls - 垂直居中布局 */}
+            <div className="flex flex-col items-center gap-6 py-4">
+              <button
+                onClick={handleMicClick}
+                className={`w-24 h-24 rounded-full flex items-center justify-center transition-all shadow-lg ${
+                  asrStatus === "recording"
+                    ? "bg-red-500/90 hover:bg-red-500 scale-105"
+                    : "bg-slate-200/90 hover:bg-slate-200"
+                }`}
+                aria-label={asrStatus === "recording" ? "Stop recording and send" : "Start recording"}
+              >
+                <Mic className={`w-12 h-12 ${asrStatus === "recording" ? "text-white" : "text-gray-800"}`} />
+              </button>
+              <span className="text-gray-200 text-base">写道 Renaissance</span>
+            </div>
+          </div>
+        )}
+
+        <style jsx>{`
+          @keyframes circleExpand {
+            0% {
+              width: 10rem;
+              height: 10rem;
+              opacity: 1;
+            }
+            70% {
+              width: 300vmax;
+              height: 300vmax;
+              opacity: 0.8;
+            }
+            100% {
+              width: 300vmax;
+              height: 300vmax;
+              opacity: 0;
+            }
+          }
+
+          @keyframes iconFade {
+            0% { opacity: 1; }
+            40% { opacity: 0; }
+            100% { opacity: 0; }
+          }
+
+          @keyframes contentFadeIn {
+            from {
+              opacity: 0;
+              transform: scale(0.95);
+            }
+            to {
+              opacity: 1;
+              transform: scale(1);
+            }
+          }
+
+          .circle-expand {
+            width: 10rem;
+            height: 10rem;
+            animation: circleExpand 1.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+          }
+
+          .icon-fade {
+            animation: iconFade 0.8s ease-out forwards;
+          }
+
+          .content-fade-in {
+            animation: contentFadeIn 0.6s ease-out forwards;
+          }
+        `}</style>
+      </div>
+    );
+  }
+
+  // 第二个界面：完整功能UI（垂直居中布局）
+  return (
+    <div className="fixed inset-0 bg-gradient-to-b from-gray-800 to-zinc-600 flex flex-col items-center justify-center p-6 gap-6">
+      <div className="w-full max-w-md flex flex-col gap-6">
+        {/* Speech to Text Section */}
+        <div className="flex flex-col gap-3">
+          <h2 className="text-xl text-white font-normal">Speech to Text</h2>
+          <div className="w-full h-56 bg-white/10 border border-white/20 rounded-lg p-4 overflow-auto">
+            <p className="text-white/90 text-base leading-relaxed whitespace-pre-wrap">
+              {transcript || "点击麦克风开始录音..."}
+            </p>
+          </div>
+        </div>
+
+        {/* Text after LLM Section */}
+        <div className="flex flex-col gap-3">
+          <h2 className="text-xl text-white font-normal">Text after LLM</h2>
+          <div className="w-full h-64 bg-white/10 border border-white/20 rounded-lg p-4 overflow-auto">
+            <p className="text-white/90 text-base leading-relaxed whitespace-pre-wrap">
+              {textLLM || "LLM 处理结果将显示在这里..."}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom Controls - 垂直居中，单个按钮 */}
+      <div className="flex flex-col items-center gap-6">
+        <button
+          onClick={handleMicClick}
+          className={`w-24 h-24 rounded-full flex items-center justify-center transition-all shadow-lg ${
+            asrStatus === "recording"
+              ? "bg-red-500/90 hover:bg-red-500 scale-105"
+              : "bg-slate-200/90 hover:bg-slate-200"
+          }`}
+          aria-label={asrStatus === "recording" ? "Stop recording and send" : "Start recording"}
+        >
+          <Mic className={`w-12 h-12 ${asrStatus === "recording" ? "text-white" : "text-gray-800"}`} />
+        </button>
+        <span className="text-gray-200 text-base">写道 Renaissance</span>
+      </div>
+    </div>
+  );
+}
+
+// 生成发送给后端的输入格式
+function generateUserInput(oldText: string, transcript: string): string {
+  return `<old_text>${oldText}</old_text><speech>${transcript}</speech>`;
+}
+
+// 从后端返回的内容中提取 <new_text> 标签内的文本
+function extractNewText(text: string): string {
+  const newTextMatch = text.match(/<new_text>([\s\S]*?)<\/new_text>/);
+  if (newTextMatch && newTextMatch[1]) {
+    return newTextMatch[1].trim();
+  }
+  return text;
+}

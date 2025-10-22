@@ -1,0 +1,92 @@
+"use client";
+import { useEffect, useState } from "react";
+import { useCompletion } from "@ai-sdk/react";
+import { useASR } from "@/hooks/use-asr";
+import { Mic, Send } from "lucide-react";
+
+export default function Home() {
+  const [textLLM, setTextLLM] = useState<string>("");
+
+  const { transcript, asrStatus, error, startRecording, stopRecording } =
+    useASR();
+  const { completion, input, setInput, handleSubmit, isLoading } =
+    useCompletion({
+      api: process.env.NEXT_PUBLIC_API_URL + "/api/completion",
+      onFinish: (_: string, completion: string) => {
+        setTextLLM(completion);
+      },
+    });
+
+  useEffect(() => {
+    if (error) {
+      console.error("ASR Error:", error);
+    }
+  }, [error]);
+
+  return (
+    <div className="min-h-screen w-full bg-gradient-to-b from-gray-800 to-zinc-600 flex flex-col items-center justify-center p-6">
+      <main className="w-full max-w-md flex flex-col gap-6">
+        {/* Speech to Text Section */}
+        <div className="flex flex-col gap-3">
+          <h2 className="text-white text-xl font-normal">Speech to Text</h2>
+          <div className="w-full h-56 p-4 bg-white/10 border border-white/20 rounded-lg overflow-auto text-white text-lg">
+            {transcript || ""}
+          </div>
+        </div>
+
+        {/* Text after LLM Section */}
+        <div className="flex flex-col gap-3">
+          <h2 className="text-white text-xl font-normal">Text after LLM</h2>
+          <div className="w-full h-64 p-4 bg-white/10 border border-white/20 rounded-lg overflow-auto text-white text-lg">
+            {!isLoading || asrStatus === "recording"
+              ? textLLM.slice(10, -11)
+              : completion.slice(10)}
+          </div>
+        </div>
+
+        {/* Microphone Button and Branding */}
+        <div className="flex flex-col items-center gap-6 pt-6">
+          <form onSubmit={handleSubmit}>
+            <input type="hidden" name="prompt" value={input} />
+
+            {asrStatus === "recording" ? (
+              <button
+                type="submit"
+                onClick={() => {
+                  stopRecording();
+                  setInput(generateUserInput(textLLM.slice(10, -11), transcript));
+                }}
+                className="w-36 h-36 bg-slate-200/90 rounded-full flex items-center justify-center hover:bg-slate-200 transition-colors"
+              >
+                <Send className="w-20 h-20 text-gray-700" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={startRecording}
+                disabled={isLoading}
+                className="w-36 h-36 bg-slate-200/90 rounded-full flex items-center justify-center hover:bg-slate-200 transition-colors disabled:opacity-50"
+              >
+                <Mic
+                  className={`w-20 h-20 ${
+                    isLoading ? "text-gray-600" : "text-gray-700"
+                  }`}
+                />
+              </button>
+            )}
+          </form>
+
+          {/* Brand Name */}
+          <div className="flex items-center gap-1">
+            <span className="text-gray-200 text-xl font-normal">写道</span>
+            <span className="text-gray-200 text-xl font-normal">Renaissance</span>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function generateUserInput(oldText: string, transcript: string): string {
+  return `<old_text>${oldText}</old_text><speech>${transcript}</speech>`;
+}
