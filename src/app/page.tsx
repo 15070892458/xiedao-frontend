@@ -4,26 +4,54 @@ import { useCompletion } from "@ai-sdk/react";
 import { useASR } from "@/hooks/use-asr";
 import { Mic, Eye, X, Copy, Check } from "lucide-react";
 
+// 解析LLM输出，提取new_text标签内容
+function parseNewText(completion: string): string | null {
+  const match = completion.match(/<new_text>([\s\S]*?)<\/new_text>/);
+  return match ? match[1].trim() : null;
+}
+
+// 生成用户输入（保持旧文本）
+function generateUserInput(oldText: string, transcript: string): string {
+  return `<old_text>${oldText}</old_text><speech>${transcript}</speech>`;
+}
+
 export default function Home() {
   const [textLLM, setTextLLM] = useState<string>("");
+  const [highlightedText, setHighlightedText] = useState<string>("");
 
   const { transcript, asrStatus, error, startRecording, stopRecording } = useASR();
   const { completion, input, setInput, handleSubmit, isLoading } = useCompletion({
     api: process.env.NEXT_PUBLIC_API_URL + "/llm/completion",
     onFinish: (_: string, completion: string) => {
-      setTextLLM(completion);
+      // 解析LLM输出
+      const newText = parseNewText(completion);
+      
+      if (newText) {
+        // 有新文本：追加到旧文本
+        const updatedText = textLLM ? textLLM + "\n\n" + newText : newText;
+        setTextLLM(updatedText);
+        
+        // 设置高亮文本
+        setHighlightedText(newText);
+        
+        // 3秒后取消高亮
+        setTimeout(() => setHighlightedText(""), 3000);
+      } else {
+        // 没有new_text标签：显示完整输出（思考过程）
+        setTextLLM(textLLM + "\n\n" + completion);
+      }
     },
   });
 
   const [pageState, setPageState] = useState<"start" | "countdown" | "recording" | "animating" | "main">("start");
-  const [countdown, setCountdown] = useState(3); // 倒计时：3, 2, 1
+  const [countdown, setCountdown] = useState(3);
   const [showOriginal, setShowOriginal] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
   const [shouldSubmit, setShouldSubmit] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showLowVolumeWarning, setShowLowVolumeWarning] = useState(false);
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
-  const [isFirstRecording, setIsFirstRecording] = useState(true); // 是否第一次录音
+  const [isFirstRecording, setIsFirstRecording] = useState(true);
   const touchStartRef = useRef<{ distance: number } | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -37,15 +65,30 @@ export default function Home() {
     if (error) {
       console.error("ASR Error:", error);
       
-      const errorMessage = error.toString().toLowerCase();
+      const errorString = error.toString();
+      const errorLower = errorString.toLowerCase();
       
-      if (errorMessage.includes('notfound') || errorMessage.includes('device not found')) {
+      // 权限问题
+      if (errorLower.includes('notallowederror') || 
+          errorLower.includes('permission denied') ||
+          errorLower.includes('permission')) {
         setMicrophoneError("无法使用麦克风，请检查权限设置");
-      } else if (errorMessage.includes('notallowed') || errorMessage.includes('permission')) {
+      }
+      // 找不到设备
+      else if (errorLower.includes('notfounderror') || 
+               errorLower.includes('device not found') ||
+               errorLower.includes('requested device not found')) {
         setMicrophoneError("无法使用麦克风，请检查权限设置");
-      } else if (errorMessage.includes('notreadable') || errorMessage.includes('in use')) {
-        setMicrophoneError("麦克风遇到问题，请联系我们处理");
-      } else {
+      }
+      // 设备被占用
+      else if (errorLower.includes('notreadableerror') || 
+               errorLower.includes('could not start') ||
+               errorLower.includes('in use') ||
+               errorLower.includes('already in use')) {
+        setMicrophoneError("麦克风已被占用，请检查后台应用");
+      }
+      // 其他未知错误
+      else {
         setMicrophoneError("麦克风遇到问题，请联系我们处理");
       }
     } else {
@@ -62,10 +105,9 @@ export default function Home() {
         }, 1000);
         return () => clearTimeout(timer);
       } else {
-        // 倒计时结束，开始录音
         setPageState("recording");
         startRecording();
-        setCountdown(3); // 重置倒计时
+        setCountdown(3);
       }
     }
   }, [pageState, countdown]);
@@ -88,14 +130,12 @@ export default function Home() {
   useEffect(() => {
     if (isLoading && pageState === "recording") {
       if (isFirstRecording) {
-        // 第一次录音：播放动画
         setPageState("animating");
         setTimeout(() => {
           setPageState("main");
           setIsFirstRecording(false);
         }, 1000);
       } else {
-        // 后续录音：直接跳转
         setPageState("main");
       }
     }
@@ -103,7 +143,7 @@ export default function Home() {
 
   useEffect(() => {
     if (shouldSubmit && asrStatus === "idle") {
-      setInput(generateUserInput(textLLM.slice(10, -11), transcript));
+      setInput(generateUserInput(textLLM, transcript));
       setTimeout(() => {
         if (formRef.current) {
           formRef.current.requestSubmit();
@@ -116,6 +156,7 @@ export default function Home() {
   useEffect(() => {
     if (pageState === "recording" && recordingStartTimeRef.current > 0) {
       const currentTime = Date.now();
+      const elapsedTime = currentTime - recordingStartTimeRef.current;
 
       if (audioLevel > 0.15) {
         lowVolumeStartTimeRef.current = null;
@@ -127,7 +168,7 @@ export default function Home() {
 
         const lowVolumeDuration = currentTime - lowVolumeStartTimeRef.current;
 
-        if (lowVolumeDuration > 8000) {
+        if (lowVolumeDuration > 5000 && elapsedTime > 5000) {
           setShowLowVolumeWarning(true);
         }
       }
@@ -180,11 +221,11 @@ export default function Home() {
   };
 
   const handleRestartRecording = () => {
-    setPageState("countdown"); // 直接开始倒计时，不播放动画
+    setPageState("countdown");
   };
 
   const handleCopy = async () => {
-    const textToCopy = showOriginal ? transcript : textLLM.slice(10, -11);
+    const textToCopy = showOriginal ? transcript : textLLM;
     try {
       await navigator.clipboard.writeText(textToCopy);
       setCopied(true);
@@ -257,13 +298,11 @@ export default function Home() {
           background: 'radial-gradient(ellipse 50% 108.4% at 50% 50%, #F4F4F5 0%, #D5D5D5 100%)'
         }}
       >
-        {/* ✅ 修改1：pt-72 → pt-48，text-neutral-500 → text-gray-400 */}
         <div className="absolute top-0 left-0 right-0 flex justify-center pt-48">
           <span className="text-gray-400 text-sm">倒计时:</span>
         </div>
 
         <div className="flex flex-col items-center gap-6">
-          {/* ✅ 修改2：w-36 h-36 → w-40 h-40 */}
           <div className="w-40 h-40 rounded-full bg-[#E9BA87] border-4 border-[#EECBA5] flex items-center justify-center shadow-xl">
             <span className="text-white text-6xl font-bold">{countdown}</span>
           </div>
@@ -469,15 +508,46 @@ export default function Home() {
       </div>
 
       <div className="flex-1 px-6 overflow-auto">
-        <p className="text-zinc-900 text-base leading-relaxed whitespace-pre-wrap">
+        <div className="text-zinc-900 text-base leading-relaxed whitespace-pre-wrap">
           {showOriginal 
             ? (transcript || "暂无录音内容")
-            : (!isLoading || asrStatus === "recording"
-                ? textLLM.slice(10, -11) || "点击下方按钮开始录音..."
-                : completion.slice(10) || "正在处理..."
-              )
+            : (() => {
+                if (isLoading && asrStatus === "recording") {
+                  return "正在处理...";
+                }
+                
+                if (!textLLM && !completion) {
+                  return "点击下方按钮开始录音...";
+                }
+                
+                // 显示文本
+                const displayText = isLoading ? (textLLM + (completion ? "\n\n" + completion : "")) : textLLM;
+                
+                if (!displayText) {
+                  return "生成失败了，请重试或联系我们";
+                }
+                
+                // 如果有高亮文本，分段显示
+                if (highlightedText && displayText.includes(highlightedText)) {
+                  const lastIndex = displayText.lastIndexOf(highlightedText);
+                  const beforeHighlight = displayText.substring(0, lastIndex);
+                  const afterHighlight = displayText.substring(lastIndex + highlightedText.length);
+                  
+                  return (
+                    <>
+                      {beforeHighlight}
+                      <span className="bg-yellow-200 animate-highlight-fade">
+                        {highlightedText}
+                      </span>
+                      {afterHighlight}
+                    </>
+                  );
+                }
+                
+                return displayText;
+              })()
           }
-        </p>
+        </div>
       </div>
 
       {!showOriginal && (
@@ -501,11 +571,14 @@ export default function Home() {
         .animate-page-fade-in {
           animation: pageFadeIn 0.4s ease-out;
         }
+        @keyframes highlightFade {
+          0% { background-color: #fef08a; }
+          100% { background-color: transparent; }
+        }
+        .animate-highlight-fade {
+          animation: highlightFade 3s ease-out forwards;
+        }
       `}</style>
     </div>
   );
-}
-
-function generateUserInput(oldText: string, transcript: string): string {
-  return `<old_text>${oldText}</old_text><speech>${transcript}</speech>`;
 }
