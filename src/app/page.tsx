@@ -9,7 +9,7 @@ export default function Home() {
 
   const { transcript, asrStatus, error, startRecording, stopRecording } = useASR();
   const { completion, input, setInput, handleSubmit, isLoading } = useCompletion({
-    api: process.env.NEXT_PUBLIC_API_URL + "/api/v1/llm/completion",
+    api: process.env.NEXT_PUBLIC_API_URL + "/llm/completion",
     onFinish: (_: string, completion: string) => {
       setTextLLM(completion);
     },
