@@ -6,13 +6,22 @@ import { Mic, Eye, X, Copy, Check } from "lucide-react";
 
 // 解析LLM输出，提取new_text标签内容
 function parseNewText(completion: string): string | null {
-  const match = completion.match(/<new_text>([\s\S]*?)<\/new_text>/);
-  if (match) {
-    const text = match[1].trim();
-    // 去掉末尾的百分号
-    return text.replace(/%\s*$/, '').trim();
+  // 尝试匹配 <new_text> 标签
+  const newTextMatch = completion.match(/<new_text>([\s\S]*?)<\/new_text>/);
+  
+  if (newTextMatch) {
+    const text = newTextMatch[1].trim().replace(/%\s*$/, '').trim();
+    return text || null; // 如果标签内容为空，返回 null
   }
-  return null;
+  
+  // 如果没有 new_text 标签，检查是否有其他系统标签
+  if (completion.includes('<old_text>') || completion.includes('<speech>')) {
+    return null;
+  }
+  
+  // 否则使用完整的 completion（去掉百分号和空白）
+  const text = completion.trim().replace(/%\s*$/, '').trim();
+  return text || null;
 }
 
 // 生成用户输入
@@ -40,10 +49,8 @@ export default function Home() {
         
         // 3秒后取消高亮
         setTimeout(() => setHighlightedText(""), 3000);
-      } else {
-        // 没有有效文本：保持旧文本不变
-        // 不显示思考过程
       }
+      // 如果没有有效文本，保持旧文本不变
     },
   });
 
@@ -68,7 +75,7 @@ export default function Home() {
   useEffect(() => {
     if (error) {
       console.error("ASR Error:", error);
-      setMicrophoneError("麦克风遇到问题，请连接麦克风并确保不被占用");
+      setMicrophoneError("麦克风遇到问题，请检查麦克风权限并确保不被占用");
     } else {
       setMicrophoneError(null);
     }
@@ -146,6 +153,7 @@ export default function Home() {
 
         const lowVolumeDuration = currentTime - lowVolumeStartTimeRef.current;
 
+        // 5秒检测
         if (lowVolumeDuration > 5000 && elapsedTime > 5000) {
           setShowLowVolumeWarning(true);
         }
