@@ -11,7 +11,7 @@ function parseNewText(completion: string): string | null {
   
   if (newTextMatch) {
     const text = newTextMatch[1].trim().replace(/%\s*$/, '').trim();
-    return text || null; // 如果标签内容为空，返回 null
+    return text || null;
   }
   
   // 如果没有 new_text 标签，检查是否有其他系统标签
@@ -31,7 +31,6 @@ function generateUserInput(oldText: string, transcript: string): string {
 
 export default function Home() {
   const [textLLM, setTextLLM] = useState<string>("");
-  const [highlightedText, setHighlightedText] = useState<string>("");
 
   const { transcript, asrStatus, error, startRecording, stopRecording } = useASR();
   const { completion, input, setInput, handleSubmit, isLoading } = useCompletion({
@@ -41,14 +40,8 @@ export default function Home() {
       const newText = parseNewText(completion);
       
       if (newText) {
-        // 直接覆盖旧文本（不累积）
+        // 直接覆盖旧文本
         setTextLLM(newText);
-        
-        // 设置高亮文本
-        setHighlightedText(newText);
-        
-        // 3秒后取消高亮
-        setTimeout(() => setHighlightedText(""), 3000);
       }
       // 如果没有有效文本，保持旧文本不变
     },
@@ -153,7 +146,6 @@ export default function Home() {
 
         const lowVolumeDuration = currentTime - lowVolumeStartTimeRef.current;
 
-        // 5秒检测
         if (lowVolumeDuration > 5000 && elapsedTime > 5000) {
           setShowLowVolumeWarning(true);
         }
@@ -494,31 +486,15 @@ export default function Home() {
       </div>
 
       <div className="flex-1 px-6 overflow-auto">
-        <div className="text-zinc-900 text-base leading-relaxed whitespace-pre-wrap">
+        <p className="text-zinc-900 text-base leading-relaxed whitespace-pre-wrap">
           {showOriginal 
             ? (transcript || "暂无录音内容")
-            : (() => {
-                if (isLoading) {
-                  return "正在处理...";
-                }
-                
-                if (!textLLM) {
-                  return "点击下方按钮开始录音...";
-                }
-                
-                // 如果有高亮文本，显示高亮效果
-                if (highlightedText && textLLM === highlightedText) {
-                  return (
-                    <span className="bg-yellow-200 animate-highlight-fade">
-                      {textLLM}
-                    </span>
-                  );
-                }
-                
-                return textLLM;
-              })()
+            : (isLoading
+                ? (parseNewText(completion) || completion || "正在处理...")
+                : (textLLM || "点击下方按钮开始录音...")
+              )
           }
-        </div>
+        </p>
       </div>
 
       {!showOriginal && (
@@ -541,13 +517,6 @@ export default function Home() {
         }
         .animate-page-fade-in {
           animation: pageFadeIn 0.4s ease-out;
-        }
-        @keyframes highlightFade {
-          0% { background-color: #fef08a; }
-          100% { background-color: transparent; }
-        }
-        .animate-highlight-fade {
-          animation: highlightFade 3s ease-out forwards;
         }
       `}</style>
     </div>
