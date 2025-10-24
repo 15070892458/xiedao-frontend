@@ -7,10 +7,15 @@ import { Mic, Eye, X, Copy, Check } from "lucide-react";
 // 解析LLM输出，提取new_text标签内容
 function parseNewText(completion: string): string | null {
   const match = completion.match(/<new_text>([\s\S]*?)<\/new_text>/);
-  return match ? match[1].trim() : null;
+  if (match) {
+    const text = match[1].trim();
+    // 去掉末尾的百分号
+    return text.replace(/%\s*$/, '').trim();
+  }
+  return null;
 }
 
-// 生成用户输入（保持旧文本）
+// 生成用户输入
 function generateUserInput(oldText: string, transcript: string): string {
   return `<old_text>${oldText}</old_text><speech>${transcript}</speech>`;
 }
@@ -27,9 +32,8 @@ export default function Home() {
       const newText = parseNewText(completion);
       
       if (newText) {
-        // 有新文本：追加到旧文本
-        const updatedText = textLLM ? textLLM + "\n\n" + newText : newText;
-        setTextLLM(updatedText);
+        // 直接覆盖旧文本（不累积）
+        setTextLLM(newText);
         
         // 设置高亮文本
         setHighlightedText(newText);
@@ -37,8 +41,8 @@ export default function Home() {
         // 3秒后取消高亮
         setTimeout(() => setHighlightedText(""), 3000);
       } else {
-        // 没有new_text标签：显示完整输出（思考过程）
-        setTextLLM(textLLM + "\n\n" + completion);
+        // 没有有效文本：保持旧文本不变
+        // 不显示思考过程
       }
     },
   });
@@ -64,33 +68,7 @@ export default function Home() {
   useEffect(() => {
     if (error) {
       console.error("ASR Error:", error);
-      
-      const errorString = error.toString();
-      const errorLower = errorString.toLowerCase();
-      
-      // 权限问题
-      if (errorLower.includes('notallowederror') || 
-          errorLower.includes('permission denied') ||
-          errorLower.includes('permission')) {
-        setMicrophoneError("无法使用麦克风，请检查权限设置");
-      }
-      // 找不到设备
-      else if (errorLower.includes('notfounderror') || 
-               errorLower.includes('device not found') ||
-               errorLower.includes('requested device not found')) {
-        setMicrophoneError("无法使用麦克风，请检查权限设置");
-      }
-      // 设备被占用
-      else if (errorLower.includes('notreadableerror') || 
-               errorLower.includes('could not start') ||
-               errorLower.includes('in use') ||
-               errorLower.includes('already in use')) {
-        setMicrophoneError("麦克风已被占用，请检查后台应用");
-      }
-      // 其他未知错误
-      else {
-        setMicrophoneError("麦克风遇到问题，请联系我们处理");
-      }
+      setMicrophoneError("麦克风遇到问题，请连接麦克风并确保不被占用");
     } else {
       setMicrophoneError(null);
     }
@@ -512,39 +490,24 @@ export default function Home() {
           {showOriginal 
             ? (transcript || "暂无录音内容")
             : (() => {
-                if (isLoading && asrStatus === "recording") {
+                if (isLoading) {
                   return "正在处理...";
                 }
                 
-                if (!textLLM && !completion) {
+                if (!textLLM) {
                   return "点击下方按钮开始录音...";
                 }
                 
-                // 显示文本
-                const displayText = isLoading ? (textLLM + (completion ? "\n\n" + completion : "")) : textLLM;
-                
-                if (!displayText) {
-                  return "生成失败了，请重试或联系我们";
-                }
-                
-                // 如果有高亮文本，分段显示
-                if (highlightedText && displayText.includes(highlightedText)) {
-                  const lastIndex = displayText.lastIndexOf(highlightedText);
-                  const beforeHighlight = displayText.substring(0, lastIndex);
-                  const afterHighlight = displayText.substring(lastIndex + highlightedText.length);
-                  
+                // 如果有高亮文本，显示高亮效果
+                if (highlightedText && textLLM === highlightedText) {
                   return (
-                    <>
-                      {beforeHighlight}
-                      <span className="bg-yellow-200 animate-highlight-fade">
-                        {highlightedText}
-                      </span>
-                      {afterHighlight}
-                    </>
+                    <span className="bg-yellow-200 animate-highlight-fade">
+                      {textLLM}
+                    </span>
                   );
                 }
                 
-                return displayText;
+                return textLLM;
               })()
           }
         </div>
