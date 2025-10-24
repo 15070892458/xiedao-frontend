@@ -10,9 +10,18 @@ export function useASR() {
 
     const startRecording = () => {
         setTranscript("");
-        const wsUrl = process.env.NEXT_PUBLIC_DEPLOY_ENV === 'production'
-            ? 'wss://xiedao.website/proxy/rtasr'
-            : 'ws://localhost:8080/proxy/rtasr';
+        
+        // 根据环境选择 WebSocket URL
+        let wsUrl: string;
+        const deployEnv = process.env.NEXT_PUBLIC_DEPLOY_ENV;
+        
+        if (deployEnv === 'production') {
+            wsUrl = 'wss://xiedao.website/proxy/rtasr';
+        } else if (deployEnv === 'test') {
+            wsUrl = 'wss://test.xiedao.website/proxy/rtasr';
+        } else {
+            wsUrl = 'ws://localhost:8080/proxy/rtasr';
+        }
 
         asrClientRef.current = new ASRClient({
             wsUrl,
